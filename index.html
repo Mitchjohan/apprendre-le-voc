@@ -1,0 +1,1079 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Leitner Vocab</title>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Nunito',sans-serif;background:#faf7f2;color:#2d2a26;min-height:100vh}
+input,select,button,textarea{font-family:inherit}
+input:focus,textarea:focus{outline:2px solid #e07a3a;outline-offset:-1px}
+button{cursor:pointer;border:none;font-family:inherit;transition:all .15s ease}
+button:hover:not(:disabled){filter:brightness(1.06)}
+button:active:not(:disabled){transform:scale(0.97)}
+button:disabled{opacity:.4;cursor:not-allowed}
+@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pop{0%{transform:scale(0.8);opacity:0}100%{transform:scale(1);opacity:1}}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(220,53,69,0.4)}70%{box-shadow:0 0 0 16px rgba(220,53,69,0)}100%{box-shadow:0 0 0 0 rgba(220,53,69,0)}}
+.fade-in{animation:fadeIn .35s ease forwards}
+.pop{animation:pop .3s ease forwards}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-thumb{background:#d4c9b8;border-radius:3px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+var useState = React.useState;
+var useEffect = React.useEffect;
+var useRef = React.useRef;
+var Fragment = React.Fragment;
+
+// ── CONSTANTS ──────────────────────────────────────
+
+var STORAGE_PREFIX = "leitner_vocab_";
+var STUDENT_CODE_KEY = "leitner_student_code";
+var SUPABASE_URL = "https://wqibewffiqmxyscygeju.supabase.co";
+var SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndxaWJld2ZmaXFteHlzY3lnZWp1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzMTk2MTYsImV4cCI6MjA5NDg5NTYxNn0.2ZF7pFhpV5nRbhL5LiwLLzWc3pcEV12K5bXqX8JzWQU";
+
+function storageKey(lang) { return STORAGE_PREFIX + lang; }
+
+function cloudSave(studentCode, data) {
+  if (!studentCode) return Promise.resolve(false);
+  var allData = {};
+  try { allData.english = JSON.parse(localStorage.getItem(storageKey("english"))); } catch(e) {}
+  try { allData.german = JSON.parse(localStorage.getItem(storageKey("german"))); } catch(e) {}
+  if (data && data.language === "english") allData.english = data;
+  if (data && data.language === "german") allData.german = data;
+  
+  return fetch(SUPABASE_URL + "/rest/v1/student_data?student_code=eq." + encodeURIComponent(studentCode), {
+    method: "GET",
+    headers: {"apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY}
+  }).then(function(res) { return res.json(); }).then(function(rows) {
+    if (rows.length > 0) {
+      return fetch(SUPABASE_URL + "/rest/v1/student_data?student_code=eq." + encodeURIComponent(studentCode), {
+        method: "PATCH",
+        headers: {"apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY, "Content-Type": "application/json", "Prefer": "return=minimal"},
+        body: JSON.stringify({data: allData, updated_at: new Date().toISOString()})
+      });
+    } else {
+      return fetch(SUPABASE_URL + "/rest/v1/student_data", {
+        method: "POST",
+        headers: {"apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY, "Content-Type": "application/json", "Prefer": "return=minimal"},
+        body: JSON.stringify({student_code: studentCode, data: allData})
+      });
+    }
+  }).then(function() { return true; }).catch(function(e) { console.error("Cloud save error:", e); return false; });
+}
+
+function cloudLoad(studentCode) {
+  if (!studentCode) return Promise.resolve(null);
+  return fetch(SUPABASE_URL + "/rest/v1/student_data?student_code=eq." + encodeURIComponent(studentCode) + "&select=data", {
+    method: "GET",
+    headers: {"apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY}
+  }).then(function(res) { return res.json(); }).then(function(rows) {
+    if (rows.length > 0 && rows[0].data) return rows[0].data;
+    return null;
+  }).catch(function(e) { console.error("Cloud load error:", e); return null; });
+}
+var BOX_INTERVALS = [0, 1, 2, 4, 7, 14]; // index 0 unused, box 1-5
+var BOX_COLORS = ["","#e07a3a","#e0a33a","#3aae5c","#3a8ae0","#7c3aed"];
+var BOX_LABELS = ["","Boîte 1 · J+1","Boîte 2 · J+2","Boîte 3 · J+4","Boîte 4 · J+7","Boîte 5 · J+14"];
+var LANG_LABELS = {english:"Anglais 🇬🇧",german:"Allemand 🇩🇪"};
+var LANG_FLAGS = {english:"🇬🇧",german:"🇩🇪"};
+var LANG_CODES = {english:"en-US",german:"de-DE"};
+function speak(text, lang) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  var u = new SpeechSynthesisUtterance(text);
+  var langCode = LANG_CODES[lang] || "en-US";
+  u.lang = langCode;
+  u.rate = 0.75;
+  u.pitch = 1;
+  var voices = window.speechSynthesis.getVoices();
+  var prefix = langCode.slice(0,2);
+  // Score voices: Google > enhanced/premium > local > remote
+  var candidates = [];
+  for (var i = 0; i < voices.length; i++) {
+    var v = voices[i];
+    if (v.lang.slice(0,2) !== prefix) continue;
+    var score = 0;
+    var name = v.name.toLowerCase();
+    if (name.indexOf("google") !== -1) score = 100; // Google voices are most natural
+    else if (name.indexOf("enhanced") !== -1 || name.indexOf("premium") !== -1) score = 80;
+    else if (v.localService) score = 60; // local voices
+    else score = 40; // remote
+    // Bonus for female voices (often clearer for learning)
+    if (name.indexOf("female") !== -1 || name.indexOf("samantha") !== -1 || name.indexOf("karen") !== -1 || name.indexOf("anna") !== -1) score += 5;
+    candidates.push({voice:v, score:score});
+  }
+  candidates.sort(function(a,b) { return b.score - a.score; });
+  if (candidates.length > 0) u.voice = candidates[0].voice;
+  window.speechSynthesis.speak(u);
+}
+// Preload voices
+if (window.speechSynthesis) {
+  window.speechSynthesis.getVoices();
+  window.speechSynthesis.onvoiceschanged = function() { window.speechSynthesis.getVoices(); };
+}
+
+// ── HELPERS ────────────────────────────────────────
+
+function today() { return new Date().toISOString().slice(0,10); }
+function addDays(dateStr, n) {
+  var d = new Date(dateStr + "T12:00:00");
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0,10);
+}
+function normalize(s) {
+  return s.toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g," ").replace(/[^a-z0-9 ]/g, "");
+}
+
+function levenshtein(a, b) {
+  var m = a.length, n = b.length;
+  var d = [];
+  for (var i = 0; i <= m; i++) { d[i] = [i]; }
+  for (var j = 0; j <= n; j++) { d[0][j] = j; }
+  for (var i = 1; i <= m; i++) {
+    for (var j = 1; j <= n; j++) {
+      var cost = a[i-1] === b[j-1] ? 0 : 1;
+      d[i][j] = Math.min(d[i-1][j]+1, d[i][j-1]+1, d[i-1][j-1]+cost);
+    }
+  }
+  return d[m][n];
+}
+
+function fuzzyMatch(heard, target) {
+  var h = normalize(heard);
+  var t = normalize(target);
+  // Exact match
+  if (h === t) return true;
+  // Target contained in heard (speech recognition sometimes adds words)
+  if (h.indexOf(t) !== -1) return true;
+  // Heard contained in target
+  if (t.indexOf(h) !== -1 && h.length >= t.length - 2) return true;
+  // Levenshtein: allow up to 30% difference or 2 chars, whichever is larger
+  var maxDist = Math.max(2, Math.floor(t.length * 0.3));
+  var dist = levenshtein(h, t);
+  if (dist <= maxDist) return true;
+  return false;
+}
+function loadData(lang) {
+  try { var d = JSON.parse(localStorage.getItem(storageKey(lang))); return d && d.words ? d : null; }
+  catch(e) { return null; }
+}
+function saveData(data) {
+  if (data && data.language) localStorage.setItem(storageKey(data.language), JSON.stringify(data));
+}
+function downloadJSON(data, name) {
+  var b = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
+  var u = URL.createObjectURL(b); var a = document.createElement("a");
+  a.href = u; a.download = name; a.click(); URL.revokeObjectURL(u);
+}
+function getDueWords(words) {
+  var t = today();
+  return words.filter(function(w) { return !w.learned && w.nextReview <= t; });
+}
+function getUpcoming(words, daysAhead) {
+  var t = today();
+  var end = addDays(t, daysAhead);
+  return words.filter(function(w) { return !w.learned && w.nextReview > t && w.nextReview <= end; });
+}
+
+// ── UI COMPONENTS ──────────────────────────────────
+
+function Card(props) {
+  return <div className="fade-in" style={Object.assign({background:"#fff",borderRadius:16,border:"1px solid #e8e0d4",padding:28,boxShadow:"0 2px 8px rgba(0,0,0,0.04)"}, props.style || {})}>
+    {props.children}
+  </div>;
+}
+
+function Btn(props) {
+  var styles = {
+    primary:{background:"#e07a3a",color:"#fff",padding:"12px 28px",borderRadius:12,fontSize:15,fontWeight:700},
+    success:{background:"#3aae5c",color:"#fff",padding:"12px 28px",borderRadius:12,fontSize:15,fontWeight:700},
+    danger:{background:"#dc3545",color:"#fff",padding:"12px 28px",borderRadius:12,fontSize:15,fontWeight:700},
+    ghost:{background:"transparent",color:"#8a7e70",padding:"10px 20px",borderRadius:10,fontSize:14,fontWeight:600,border:"1px solid #e8e0d4"},
+    accent:{background:"#3a8ae0",color:"#fff",padding:"12px 28px",borderRadius:12,fontSize:15,fontWeight:700}
+  };
+  var s = styles[props.variant || "primary"];
+  return <button onClick={props.onClick} disabled={props.disabled} style={Object.assign({}, s, props.style || {})}>{props.children}</button>;
+}
+
+function BoxBadge(props) {
+  var box = props.box;
+  if (box < 1 || box > 5) return null;
+  return <span style={{display:"inline-block",padding:"3px 10px",borderRadius:8,background:BOX_COLORS[box]+"20",color:BOX_COLORS[box],fontWeight:700,fontSize:12}}>
+    Boîte {box}
+  </span>;
+}
+
+function NavBar(props) {
+  return <div style={{background:"#fff",borderBottom:"1px solid #e8e0d4",padding:"12px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,zIndex:10}}>
+    <div style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}} onClick={props.onHome}>
+      <span style={{fontSize:24}}>🗃️</span>
+      <span style={{fontWeight:800,fontSize:18,color:"#e07a3a"}}>Leitner Vocab</span>
+    </div>
+    <div style={{display:"flex",alignItems:"center",gap:12}}>
+      {props.language && <span style={{fontSize:13,color:"#8a7e70",fontWeight:600}}>{LANG_LABELS[props.language]}</span>}
+      {props.studentCode && <span style={{fontSize:11,padding:"3px 10px",borderRadius:8,background:props.syncing?"#fef3c7":"#f0fdf4",color:props.syncing?"#92400e":"#166534",fontWeight:600}}>{props.syncing?"⏳":"☁️"} {props.studentCode}</span>}
+      {props.studentCode && <button onClick={props.onLogout} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:"#c4b8a8",padding:2}} title="Déconnexion">↩</button>}
+    </div>
+  </div>;
+}
+
+// ── LOGIN ──────────────────────────────────────────
+
+function LoginScreen(props) {
+  var _code = useState(""), code = _code[0], setCode = _code[1];
+  var _loading = useState(false), loading = _loading[0], setLoading = _loading[1];
+  var _error = useState(null), error = _error[0], setError = _error[1];
+
+  function handleLogin() {
+    if (!code.trim()) return;
+    var cleanCode = code.trim().toLowerCase();
+    setLoading(true);
+    setError(null);
+    cloudLoad(cleanCode).then(function(cloudData) {
+      if (cloudData) {
+        // Restore both languages from cloud
+        if (cloudData.english && cloudData.english.words) {
+          cloudData.english.language = "english";
+          localStorage.setItem(storageKey("english"), JSON.stringify(cloudData.english));
+        }
+        if (cloudData.german && cloudData.german.words) {
+          cloudData.german.language = "german";
+          localStorage.setItem(storageKey("german"), JSON.stringify(cloudData.german));
+        }
+      }
+      localStorage.setItem(STUDENT_CODE_KEY, cleanCode);
+      setLoading(false);
+      props.onLogin(cleanCode);
+    }).catch(function() {
+      // Offline - continue with local data
+      localStorage.setItem(STUDENT_CODE_KEY, cleanCode);
+      setLoading(false);
+      props.onLogin(cleanCode);
+    });
+  }
+
+  function handleKey(e) { if (e.key === "Enter") handleLogin(); }
+
+  return <div style={{maxWidth:420,margin:"80px auto",padding:"0 20px",textAlign:"center"}}>
+    <div className="pop" style={{fontSize:64,marginBottom:16}}>🗃️</div>
+    <h1 style={{fontSize:28,fontWeight:900,margin:"0 0 8px",color:"#e07a3a"}}>Leitner Vocab</h1>
+    <p style={{color:"#8a7e70",fontSize:15,marginBottom:36}}>Apprends ton vocabulaire avec la méthode des boîtes</p>
+    <Card>
+      <h2 style={{fontSize:18,fontWeight:800,margin:"0 0 8px"}}>Ton code personnel</h2>
+      <p style={{fontSize:13,color:"#8a7e70",marginBottom:20}}>Entre ton code pour retrouver tes mots (ex: ton prénom + un chiffre)</p>
+      <input value={code} onChange={function(e){setCode(e.target.value);}} onKeyDown={handleKey} placeholder="ex: emma3" style={{width:"100%",padding:"14px 18px",borderRadius:12,border:"2px solid #e8e0d4",fontSize:20,textAlign:"center",fontWeight:700,boxSizing:"border-box",marginBottom:16}}/>
+      {error && <div style={{fontSize:13,color:"#dc3545",marginBottom:12}}>{error}</div>}
+      <Btn onClick={handleLogin} disabled={!code.trim() || loading} style={{width:"100%"}}>
+        {loading ? "Chargement..." : "C'est parti ! →"}
+      </Btn>
+    </Card>
+  </div>;
+}
+
+// ── HOME ───────────────────────────────────────────
+
+function HomeScreen(props) {
+  var data = props.data;
+  var due = getDueWords(data.words);
+  var upcoming = getUpcoming(data.words, 7);
+  var learned = data.words.filter(function(w){return w.learned;});
+  var active = data.words.filter(function(w){return !w.learned;});
+  var boxCounts = [0,0,0,0,0,0];
+  active.forEach(function(w){ boxCounts[w.box]++; });
+  var importRef = useRef(null);
+  var importListRef = useRef(null);
+
+  function handleImportBackup(e) {
+    var file = e.target.files[0];
+    if (!file) return;
+    var r = new FileReader();
+    r.onload = function(ev) {
+      try {
+        var d = JSON.parse(ev.target.result);
+        // New format: {english: {...}, german: {...}}
+        if (d.english || d.german) {
+          if (d.english && d.english.words) { d.english.language = "english"; saveData(d.english); }
+          if (d.german && d.german.words) { d.german.language = "german"; saveData(d.german); }
+          // Load current language's data
+          var current = d[data.language];
+          if (current && current.words) { props.onImportData(current); }
+          alert("Sauvegarde restaurée !");
+        }
+        // Old format: single {words: [...], language: "..."}
+        else if (d && d.words) {
+          d.language = d.language || data.language;
+          saveData(d);
+          if (d.language === data.language) props.onImportData(d);
+          alert("Sauvegarde restaurée !");
+        }
+        else { alert("Fichier invalide."); }
+      } catch(ex) { alert("Erreur JSON."); }
+    };
+    r.readAsText(file);
+    e.target.value = "";
+  }
+
+  function handleExportList() {
+    var list = data.words.map(function(w) { return {french:w.french,target:w.target}; });
+    downloadJSON(list, "liste_mots_" + today() + ".json");
+  }
+
+  function handleImportList(e) {
+    var file = e.target.files[0];
+    if (!file) return;
+    var r = new FileReader();
+    r.onload = function(ev) {
+      try {
+        var list = JSON.parse(ev.target.result);
+        if (!Array.isArray(list)) { alert("Fichier invalide."); return; }
+        var newWords = list.filter(function(item) {
+          return item.french && item.target;
+        }).map(function(item) {
+          return {id:Date.now()+Math.random(),french:item.french.trim(),target:item.target.trim(),box:1,nextReview:today(),lastReviewed:null,addedDate:today(),history:[],learned:false};
+        });
+        if (newWords.length === 0) { alert("Aucun mot trouvé dans le fichier."); return; }
+        props.onImportWords(newWords);
+        alert(newWords.length + " mot(s) ajouté(s) en boîte 1 !");
+      } catch(ex) { alert("Erreur JSON."); }
+    };
+    r.readAsText(file);
+    e.target.value = "";
+  }
+
+  return <div style={{maxWidth:600,margin:"0 auto",padding:"24px 20px"}}>
+    {/* Stats */}
+    <div style={{textAlign:"center",marginBottom:20}}>
+      <div style={{fontSize:17,fontWeight:800,color:"#2d2a26",marginBottom:4}}>Bonjour ! 👋</div>
+      <div style={{fontSize:13,color:"#8a7e70"}}>{today()} · {active.length} mot{active.length>1?"s":""} actif{active.length>1?"s":""} · {learned.length} appris</div>
+    </div>
+
+    {/* Language tabs */}
+    <div style={{display:"flex",gap:0,justifyContent:"center",marginBottom:20,background:"#e8e0d4",borderRadius:12,padding:3}}>
+      {["english","german"].map(function(l) {
+        var isCurrent = data.language === l;
+        var wordCount = isCurrent ? data.words.length : 0;
+        try { var other = loadData(l); if (other) wordCount = other.words.length; } catch(e) {}
+        if (isCurrent) wordCount = data.words.length;
+        return <button key={l} onClick={function(){if(!isCurrent) props.onChangeLang(l);}} style={{flex:1,padding:"10px 16px",borderRadius:10,border:"none",background:isCurrent?"#fff":"transparent",fontWeight:700,fontSize:14,color:isCurrent?"#e07a3a":"#8a7e70",fontFamily:"inherit",cursor:isCurrent?"default":"pointer",boxShadow:isCurrent?"0 1px 4px rgba(0,0,0,0.08)":"none",transition:"all .2s"}}>
+          {LANG_FLAGS[l]} {l==="english"?"Anglais":"Allemand"}
+          <span style={{display:"block",fontSize:11,fontWeight:500,color:"#8a7e70",marginTop:2}}>{wordCount} mot{wordCount>1?"s":""}</span>
+        </button>;
+      })}
+    </div>
+
+    {/* Due today */}
+    <Card style={{marginBottom:16,background:due.length>0?"#fef3eb":"#f0faf2",borderColor:due.length>0?"#f5d0b0":"#bbf0c8"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div>
+          <div style={{fontSize:15,fontWeight:800,color:due.length>0?"#c05a1a":"#2d8a4e"}}>{due.length > 0 ? "📚 "+due.length+" mot"+(due.length>1?"s":"")+" à réviser" : "✅ Rien à réviser aujourd'hui !"}</div>
+          {upcoming.length > 0 && <div style={{fontSize:12,color:"#8a7e70",marginTop:4}}>{upcoming.length} mot{upcoming.length>1?"s":""} dans les 7 prochains jours</div>}
+        </div>
+        {due.length > 0 && <Btn onClick={props.onReview} style={{padding:"10px 24px",fontSize:14}}>Réviser →</Btn>}
+      </div>
+    </Card>
+
+    {/* Boxes overview */}
+    <Card style={{marginBottom:16}}>
+      <h3 style={{margin:"0 0 14px",fontSize:15,fontWeight:800}}>🗃️ Tes boîtes</h3>
+      <div style={{display:"flex",gap:8}}>
+        {[1,2,3,4,5].map(function(b) {
+          var pct = active.length ? boxCounts[b]/active.length*100 : 0;
+          return <div key={b} style={{flex:1,textAlign:"center"}}>
+            <div style={{height:80,background:"#f5f0ea",borderRadius:8,position:"relative",overflow:"hidden",marginBottom:6}}>
+              <div style={{position:"absolute",bottom:0,left:0,right:0,height:pct+"%",background:BOX_COLORS[b],borderRadius:"0 0 8px 8px",transition:"height .5s ease",opacity:.7}}></div>
+              <div style={{position:"relative",paddingTop:8,fontSize:20,fontWeight:800,color:BOX_COLORS[b]}}>{boxCounts[b]}</div>
+            </div>
+            <div style={{fontSize:10,fontWeight:700,color:BOX_COLORS[b]}}>B{b}</div>
+          </div>;
+        })}
+      </div>
+      {learned.length > 0 && <div style={{marginTop:10,textAlign:"center",fontSize:12,color:"#3aae5c",fontWeight:700}}>🎓 {learned.length} mot{learned.length>1?"s":""} appris</div>}
+    </Card>
+
+    {/* Actions */}
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+      <button onClick={props.onAdd} style={{background:"#fff",border:"1px solid #e8e0d4",borderRadius:14,padding:"20px 16px",display:"flex",flexDirection:"column",alignItems:"center",gap:8,fontFamily:"inherit"}}>
+        <span style={{fontSize:28}}>➕</span>
+        <span style={{fontSize:14,fontWeight:700,color:"#e07a3a"}}>Ajouter des mots</span>
+      </button>
+      <button onClick={props.onCalendar} style={{background:"#fff",border:"1px solid #e8e0d4",borderRadius:14,padding:"20px 16px",display:"flex",flexDirection:"column",alignItems:"center",gap:8,fontFamily:"inherit"}}>
+        <span style={{fontSize:28}}>🗃️</span>
+        <span style={{fontSize:14,fontWeight:700,color:"#3a8ae0"}}>Vue par boîtes</span>
+      </button>
+      <button onClick={props.onWordList} style={{background:"#fff",border:"1px solid #e8e0d4",borderRadius:14,padding:"20px 16px",display:"flex",flexDirection:"column",alignItems:"center",gap:8,fontFamily:"inherit"}}>
+        <span style={{fontSize:28}}>📖</span>
+        <span style={{fontSize:14,fontWeight:700,color:"#7c3aed"}}>Tous les mots</span>
+      </button>
+      <button onClick={props.onSettings} style={{background:"#fff",border:"1px solid #e8e0d4",borderRadius:14,padding:"20px 16px",display:"flex",flexDirection:"column",alignItems:"center",gap:8,fontFamily:"inherit"}}>
+        <span style={{fontSize:28}}>⚙️</span>
+        <span style={{fontSize:14,fontWeight:700,color:"#8a7e70"}}>Paramètres</span>
+      </button>
+    </div>
+
+    {/* Save / Load */}
+    <input ref={importRef} type="file" accept=".json" onChange={handleImportBackup} style={{display:"none"}}/>
+    <input ref={importListRef} type="file" accept=".json" onChange={handleImportList} style={{display:"none"}}/>
+    <Card style={{padding:16}}>
+      <h3 style={{margin:"0 0 12px",fontSize:14,fontWeight:800,color:"#8a7e70"}}>💾 Sauvegarder / Charger</h3>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"center"}}>
+        <Btn onClick={function(){
+          var backup = {};
+          var enData = loadData("english");
+          var deData = loadData("german");
+          if (enData) backup.english = enData;
+          if (deData) backup.german = deData;
+          if (data.language === "english") backup.english = data;
+          if (data.language === "german") backup.german = data;
+          downloadJSON(backup, "leitner_backup_"+today()+".json");
+        }} variant="ghost" style={{fontSize:12,padding:"8px 14px"}}>📥 Sauvegarder tout</Btn>
+        <Btn onClick={function(){importRef.current && importRef.current.click();}} variant="ghost" style={{fontSize:12,padding:"8px 14px"}}>📂 Charger sauvegarde</Btn>
+        <Btn onClick={handleExportList} variant="ghost" style={{fontSize:12,padding:"8px 14px"}}>💾 Exporter liste</Btn>
+        <Btn onClick={function(){importListRef.current && importListRef.current.click();}} variant="ghost" style={{fontSize:12,padding:"8px 14px"}}>📂 Charger liste</Btn>
+      </div>
+    </Card>
+  </div>;
+}
+
+// ── ADD WORDS ───────────────────────────────────────
+
+function AddWordsScreen(props) {
+  var _f = useState(""), french = _f[0], setFrench = _f[1];
+  var _t = useState(""), target = _t[0], setTarget = _t[1];
+  var _added = useState([]), added = _added[0], setAdded = _added[1];
+  var inputRef = useRef(null);
+
+  function addWord() {
+    if (!french.trim() || !target.trim()) return;
+    var newWord = {
+      id: Date.now(),
+      french: french.trim(),
+      target: target.trim(),
+      box: 1,
+      nextReview: today(),
+      lastReviewed: null,
+      addedDate: today(),
+      history: [],
+      learned: false
+    };
+    props.onAddWord(newWord);
+    setAdded(function(prev) { return [newWord].concat(prev); });
+    setFrench("");
+    setTarget("");
+    if (inputRef.current) inputRef.current.focus();
+  }
+
+  function handleKey(e) { if (e.key === "Enter") addWord(); }
+
+  var langLabel = props.language === "english" ? "Anglais" : "Allemand";
+
+  return <div style={{maxWidth:500,margin:"0 auto",padding:"24px 20px"}}>
+    <h2 style={{fontSize:22,fontWeight:800,margin:"0 0 20px",textAlign:"center"}}>➕ Ajouter des mots</h2>
+    <Card style={{marginBottom:20}}>
+      <div style={{marginBottom:14}}>
+        <label style={{fontSize:13,fontWeight:700,color:"#8a7e70",display:"block",marginBottom:6}}>Français</label>
+        <input ref={inputRef} value={french} onChange={function(e){setFrench(e.target.value);}} onKeyDown={handleKey} placeholder="ex: chat" style={{width:"100%",padding:"12px 16px",borderRadius:10,border:"1px solid #e8e0d4",fontSize:15,boxSizing:"border-box"}}/>
+      </div>
+      <div style={{marginBottom:18}}>
+        <label style={{fontSize:13,fontWeight:700,color:"#8a7e70",display:"block",marginBottom:6}}>{langLabel}</label>
+        <input value={target} onChange={function(e){setTarget(e.target.value);}} onKeyDown={handleKey} placeholder={props.language==="english"?"ex: cat":"ex: Katze"} style={{width:"100%",padding:"12px 16px",borderRadius:10,border:"1px solid #e8e0d4",fontSize:15,boxSizing:"border-box"}}/>
+      </div>
+      <Btn onClick={addWord} disabled={!french.trim()||!target.trim()} style={{width:"100%"}}>Ajouter → Boîte 1</Btn>
+    </Card>
+
+    {added.length > 0 && <Card>
+      <h3 style={{margin:"0 0 12px",fontSize:14,fontWeight:800,color:"#8a7e70"}}>Ajoutés ({added.length})</h3>
+      {added.map(function(w) {
+        return <div key={w.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #f5f0ea"}}>
+          <span style={{fontWeight:700}}>{w.french}</span>
+          <span style={{color:"#8a7e70"}}>{w.target}</span>
+        </div>;
+      })}
+    </Card>}
+
+    <div style={{textAlign:"center",marginTop:20}}>
+      <Btn onClick={props.onBack} variant="ghost">← Retour</Btn>
+    </div>
+  </div>;
+}
+
+// ── SPEECH COMPONENTS ──────────────────────────────
+
+function SpeakButton(props) {
+  return <button onClick={function(){ speak(props.text, props.language); }} title="Écouter la prononciation" style={{background:"none",border:"1px solid #e8e0d4",borderRadius:10,padding:"6px 10px",cursor:"pointer",fontSize:18,transition:"all .15s"}}>🔊</button>;
+}
+
+// ── REVIEW SESSION ─────────────────────────────────
+
+function ReviewScreen(props) {
+  var _ids = useState(function() { return getDueWords(props.data.words).map(function(w){return w.id;}); });
+  var dueIds = _ids[0];
+  var _qi = useState(0), qi = _qi[0], setQi = _qi[1];
+  var _answer = useState(""), answer = _answer[0], setAnswer = _answer[1];
+  var _result = useState(null), result = _result[0], setResult = _result[1];
+  var _stats = useState({correct:0,incorrect:0}), stats = _stats[0], setStats = _stats[1];
+  var _done = useState(false), done = _done[0], setDone = _done[1];
+  var _keepChoice = useState(null), keepChoice = _keepChoice[0], setKeepChoice = _keepChoice[1];
+  var _phase = useState("test"), phase = _phase[0], setPhase = _phase[1];
+  var _failedIds = useState([]), failedIds = _failedIds[0], setFailedIds = _failedIds[1];
+  var failedIdsRef = useRef([]);
+  var _retypeAnswer = useState(""), retypeAnswer = _retypeAnswer[0], setRetypeAnswer = _retypeAnswer[1];
+  var _retypeOk = useState(false), retypeOk = _retypeOk[0], setRetypeOk = _retypeOk[1];
+  var _retestIds = useState([]), retestIds = _retestIds[0], setRetestIds = _retestIds[1];
+  var _retestQi = useState(0), retestQi = _retestQi[0], setRetestQi = _retestQi[1];
+  var _retestResult = useState(null), retestResult = _retestResult[0], setRetestResult = _retestResult[1];
+  var _retestStats = useState({correct:0,incorrect:0}), retestStats = _retestStats[0], setRetestStats = _retestStats[1];
+  var inputRef = useRef(null);
+  var retypeRef = useRef(null);
+  var retestRef = useRef(null);
+  var totalWords = dueIds.length;
+  var lang = props.data.language;
+  var langLabel = lang === "english" ? "anglais" : "allemand";
+
+  // ── NOTHING TO REVIEW ──
+  if (totalWords === 0 && !done) {
+    return <div style={{maxWidth:500,margin:"60px auto",padding:"0 20px",textAlign:"center"}}>
+      <Card style={{padding:48}}>
+        <div style={{fontSize:48,marginBottom:12}}>✅</div>
+        <h2 style={{fontSize:22,fontWeight:800,margin:"0 0 8px"}}>Rien à réviser !</h2>
+        <p style={{color:"#8a7e70",fontSize:14}}>Reviens demain ou ajoute de nouveaux mots.</p>
+        <div style={{marginTop:24}}><Btn onClick={props.onBack} variant="ghost">← Retour</Btn></div>
+      </Card>
+    </div>;
+  }
+
+  // ── DONE SCREEN ──
+  if (done) {
+    return <div style={{maxWidth:500,margin:"60px auto",padding:"0 20px",textAlign:"center"}}>
+      <Card style={{padding:48}}>
+        <div className="pop" style={{fontSize:48,marginBottom:12}}>🎉</div>
+        <h2 style={{fontSize:22,fontWeight:800,margin:"0 0 8px"}}>Session terminée !</h2>
+        <div style={{display:"flex",gap:20,justifyContent:"center",margin:"20px 0"}}>
+          <div style={{padding:16,borderRadius:12,background:"#f0faf2"}}>
+            <div style={{fontSize:28,fontWeight:800,color:"#3aae5c"}}>{stats.correct}</div>
+            <div style={{fontSize:12,color:"#8a7e70"}}>Correct{stats.correct>1?"s":""}</div>
+          </div>
+          <div style={{padding:16,borderRadius:12,background:"#fef2f2"}}>
+            <div style={{fontSize:28,fontWeight:800,color:"#dc3545"}}>{stats.incorrect}</div>
+            <div style={{fontSize:12,color:"#8a7e70"}}>Erreur{stats.incorrect>1?"s":""}</div>
+          </div>
+        </div>
+        {retestStats.correct + retestStats.incorrect > 0 && <div style={{marginTop:8,marginBottom:16}}>
+          <div style={{fontSize:13,color:"#8a7e70",fontWeight:600,marginBottom:8}}>Retest des mots ratés :</div>
+          <span style={{color:"#3aae5c",fontWeight:700}}>{retestStats.correct} ✓</span>
+          <span style={{margin:"0 8px",color:"#c4b8a8"}}>·</span>
+          <span style={{color:"#dc3545",fontWeight:700}}>{retestStats.incorrect} ✗</span>
+        </div>}
+        <Btn onClick={props.onBack} variant="ghost">← Retour</Btn>
+      </Card>
+    </div>;
+  }
+
+  // ── HELPERS ──
+  function goToRetestOrDone() {
+    if (failedIdsRef.current.length > 0) {
+      setRetestIds(failedIdsRef.current.slice());
+      setRetestQi(0);
+      setRetestResult(null);
+      setAnswer("");
+      setPhase("retest");
+      setTimeout(function(){ if(retestRef.current) retestRef.current.focus(); }, 100);
+    } else {
+      setDone(true);
+    }
+  }
+
+  function advanceMain() {
+    setResult(null);
+    setAnswer("");
+    setRetypeAnswer("");
+    setRetypeOk(false);
+    setKeepChoice(null);
+    setPhase("test");
+    if (qi + 1 >= totalWords) {
+      goToRetestOrDone();
+    } else {
+      setQi(qi + 1);
+      setTimeout(function(){ if(inputRef.current) inputRef.current.focus(); }, 100);
+    }
+  }
+
+  // ── RETEST PHASE ──
+  if (phase === "retest") {
+    if (retestIds.length === 0) { if(!done) setDone(true); return null; }
+    var rtId = retestIds[retestQi];
+    var rtw = props.data.words.find(function(w){return w.id===rtId;});
+    if (!rtw) { setDone(true); return null; }
+
+    function checkRetest() {
+      var ok = normalize(answer) === normalize(rtw.target);
+      setRetestResult(ok ? "correct" : "incorrect");
+      setRetestStats(function(prev) {
+        return ok ? {correct:prev.correct+1,incorrect:prev.incorrect} : {correct:prev.correct,incorrect:prev.incorrect+1};
+      });
+      if (!ok) speak(rtw.target, lang);
+    }
+
+    function nextRetest() {
+      setRetestResult(null);
+      setAnswer("");
+      if (retestQi + 1 >= retestIds.length) { setDone(true); }
+      else { setRetestQi(retestQi + 1); setTimeout(function(){ if(retestRef.current) retestRef.current.focus(); }, 100); }
+    }
+
+    function retestKey(e) { if (e.key === "Enter" && answer.trim()) { if (retestResult === null) checkRetest(); else nextRetest(); } }
+
+    useEffect(function() { if(retestRef.current) retestRef.current.focus(); }, [retestQi]);
+
+    return <div style={{maxWidth:500,margin:"0 auto",padding:"24px 20px"}}>
+      <div style={{textAlign:"center",marginBottom:16}}>
+        <span style={{fontSize:12,fontWeight:700,padding:"4px 14px",borderRadius:20,background:"#fef3eb",color:"#e07a3a"}}>🔄 Retest — {retestQi+1}/{retestIds.length}</span>
+      </div>
+      <div style={{height:4,background:"#f5f0ea",borderRadius:2,marginBottom:24,overflow:"hidden"}}>
+        <div style={{height:"100%",width:(retestQi/retestIds.length*100)+"%",background:"#e07a3a",borderRadius:2,transition:"width .4s ease"}}></div>
+      </div>
+      <Card style={{padding:40,textAlign:"center"}}>
+        <div style={{fontSize:13,color:"#e07a3a",fontWeight:700,textTransform:"uppercase",letterSpacing:1.5,marginBottom:6}}>2ème chance</div>
+        <div style={{fontSize:13,color:"#8a7e70",fontWeight:700,textTransform:"uppercase",letterSpacing:1.5,marginBottom:12}}>Écris en {langLabel}</div>
+        <div style={{fontSize:32,fontWeight:800,color:"#2d2a26",marginBottom:28}}>{rtw.french}</div>
+        <input ref={retestRef} value={answer} onChange={function(e){setAnswer(e.target.value);}} onKeyDown={retestKey} disabled={retestResult!==null} placeholder="Ta réponse..." style={{width:"100%",padding:"14px 18px",borderRadius:12,border:"2px solid "+(retestResult==="correct"?"#3aae5c":retestResult==="incorrect"?"#dc3545":"#e8e0d4"),fontSize:18,textAlign:"center",fontWeight:600,boxSizing:"border-box",background:retestResult==="correct"?"#f0faf2":retestResult==="incorrect"?"#fef2f2":"#fff"}}/>
+        {retestResult !== null && <div style={{marginTop:16}}>
+          {retestResult === "correct" ? <div style={{color:"#3aae5c",fontWeight:800,fontSize:16}}>✓ Correct !</div>
+          : <div>
+            <div style={{color:"#dc3545",fontWeight:800,fontSize:16,marginBottom:4}}>✗ Incorrect</div>
+            <div style={{fontSize:14,color:"#8a7e70",marginBottom:8}}>Réponse : <strong style={{color:"#2d2a26"}}>{rtw.target}</strong></div>
+            <SpeakButton text={rtw.target} language={lang}/>
+          </div>}
+        </div>}
+        <div style={{marginTop:24}}>
+          {retestResult === null ? <Btn onClick={checkRetest} disabled={!answer.trim()}>Vérifier</Btn>
+          : <Btn onClick={nextRetest} variant={retestResult==="correct"?"success":"primary"}>Suivant →</Btn>}
+        </div>
+      </Card>
+    </div>;
+  }
+
+  // ── MAIN TEST ──
+  var cwId = dueIds[qi];
+  var cw = props.data.words.find(function(w){return w.id===cwId;});
+  if (!cw) { if(!done) setDone(true); return null; }
+
+  function checkAnswer() {
+    var isCorrect = normalize(answer) === normalize(cw.target);
+    setResult(isCorrect ? "correct" : "incorrect");
+    setStats(function(prev) {
+      return isCorrect ? {correct:prev.correct+1,incorrect:prev.incorrect} : {correct:prev.correct,incorrect:prev.incorrect+1};
+    });
+    if (!isCorrect) {
+      failedIdsRef.current = failedIdsRef.current.concat([cw.id]);
+      setFailedIds(failedIdsRef.current);
+      speak(cw.target, lang);
+    }
+  }
+
+  function goToRetype() {
+    setPhase("retype");
+    setRetypeAnswer("");
+    setRetypeOk(false);
+    setTimeout(function(){ if(retypeRef.current) retypeRef.current.focus(); }, 100);
+  }
+
+  function checkRetype() {
+    if (normalize(retypeAnswer) === normalize(cw.target)) {
+      setRetypeOk(true);
+    } else {
+      setRetypeAnswer("");
+    }
+  }
+
+  function handleCorrectNext() {
+    var wasBox5 = cw.box === 5;
+    if (wasBox5 && keepChoice === null) { setKeepChoice("asking"); return; }
+    props.onWordResult(cw.id, true, wasBox5 && keepChoice === "remove");
+    advanceMain();
+  }
+
+  function handleRetypeNext() {
+    props.onWordResult(cw.id, false, false);
+    advanceMain();
+  }
+
+  function handleKeep(choice) {
+    props.onWordResult(cw.id, true, choice === "remove");
+    advanceMain();
+  }
+
+  function handleKey(e) {
+    if (e.key === "Enter" && answer.trim()) {
+      if (result === null) checkAnswer();
+      else if (result === "correct") handleCorrectNext();
+      else goToRetype();
+    }
+  }
+
+  function handleRetypeKey(e) {
+    if (e.key === "Enter" && retypeAnswer.trim()) {
+      if (!retypeOk) checkRetype();
+      else handleRetypeNext();
+    }
+  }
+
+  useEffect(function() { if(inputRef.current && phase==="test") inputRef.current.focus(); }, [qi]);
+
+  return <div style={{maxWidth:500,margin:"0 auto",padding:"24px 20px"}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+      <span style={{fontSize:13,color:"#8a7e70",fontWeight:600}}>{qi+1}/{totalWords}</span>
+      <BoxBadge box={cw.box}/>
+    </div>
+    <div style={{height:4,background:"#f5f0ea",borderRadius:2,marginBottom:24,overflow:"hidden"}}>
+      <div style={{height:"100%",width:(qi/totalWords*100)+"%",background:"#e07a3a",borderRadius:2,transition:"width .4s ease"}}></div>
+    </div>
+
+    <Card style={{padding:40,textAlign:"center",marginBottom:20}}>
+      <div style={{fontSize:13,color:"#8a7e70",fontWeight:700,textTransform:"uppercase",letterSpacing:1.5,marginBottom:12}}>Écris en {langLabel}</div>
+      <div style={{fontSize:32,fontWeight:800,color:"#2d2a26",marginBottom:28}}>{cw.french}</div>
+
+      {keepChoice === "asking" ? <div>
+        <p style={{fontSize:14,color:"#8a7e70",marginBottom:16}}>Ce mot a atteint la boîte 5 ! 🎓</p>
+        <p style={{fontSize:15,fontWeight:700,marginBottom:20}}>Le considérer comme appris ?</p>
+        <div style={{display:"flex",gap:12,justifyContent:"center"}}>
+          <Btn onClick={function(){handleKeep("remove");}} variant="success">✓ Oui, appris !</Btn>
+          <Btn onClick={function(){handleKeep("keep");}} variant="ghost">Non, garder</Btn>
+        </div>
+      </div> : phase === "retype" ? <div>
+        <div style={{padding:"12px 16px",borderRadius:10,background:"#fef2f2",marginBottom:12}}>
+          <div style={{color:"#dc3545",fontWeight:800,fontSize:14,marginBottom:4}}>✗ Incorrect</div>
+          <div style={{fontSize:15,color:"#2d2a26"}}>La bonne réponse est : <strong>{cw.target}</strong></div>
+        </div>
+        <div style={{marginBottom:16}}>
+          <SpeakButton text={cw.target} language={lang}/>
+          <span style={{fontSize:12,color:"#8a7e70",marginLeft:8}}>Écoute la prononciation</span>
+        </div>
+        {!retypeOk ? <Fragment>
+          <p style={{fontSize:13,color:"#8a7e70",marginBottom:10,fontWeight:600}}>Retape la bonne réponse :</p>
+          <input ref={retypeRef} value={retypeAnswer} onChange={function(e){setRetypeAnswer(e.target.value);}} onKeyDown={handleRetypeKey} placeholder="Retape ici..." style={{width:"100%",padding:"14px 18px",borderRadius:12,border:"2px solid #e8e0d4",fontSize:18,textAlign:"center",fontWeight:600,boxSizing:"border-box"}}/>
+          <div style={{marginTop:16}}>
+            <Btn onClick={checkRetype} disabled={!retypeAnswer.trim()}>Valider</Btn>
+          </div>
+        </Fragment> : <Fragment>
+          <div style={{color:"#3aae5c",fontWeight:800,fontSize:16,marginBottom:16}}>✓ Bien retapé !</div>
+          <Btn onClick={handleRetypeNext} variant="primary">Suivant →</Btn>
+        </Fragment>}
+      </div> : <Fragment>
+        <input ref={inputRef} value={answer} onChange={function(e){setAnswer(e.target.value);}} onKeyDown={handleKey} disabled={result!==null} placeholder="Ta réponse..." style={{width:"100%",padding:"14px 18px",borderRadius:12,border:"2px solid "+(result==="correct"?"#3aae5c":result==="incorrect"?"#dc3545":"#e8e0d4"),fontSize:18,textAlign:"center",fontWeight:600,boxSizing:"border-box",background:result==="correct"?"#f0faf2":result==="incorrect"?"#fef2f2":"#fff"}}/>
+        {result !== null && <div style={{marginTop:16}}>
+          {result === "correct" ? <Fragment>
+            <div style={{color:"#3aae5c",fontWeight:800,fontSize:16}}>✓ Correct !</div>
+            <div style={{marginTop:8}}><SpeakButton text={cw.target} language={lang}/></div>
+          </Fragment> : <Fragment>
+            <div style={{color:"#dc3545",fontWeight:800,fontSize:16,marginBottom:4}}>✗ Incorrect</div>
+            <div style={{fontSize:14,color:"#8a7e70",marginBottom:8}}>Réponse : <strong style={{color:"#2d2a26"}}>{cw.target}</strong></div>
+            <SpeakButton text={cw.target} language={lang}/>
+          </Fragment>}
+        </div>}
+        <div style={{marginTop:24}}>
+          {result === null ? <Btn onClick={checkAnswer} disabled={!answer.trim()}>Vérifier</Btn>
+          : result === "correct" ? <Btn onClick={handleCorrectNext} variant="success">Suivant →</Btn>
+          : <Btn onClick={goToRetype} variant="primary">Corriger →</Btn>}
+        </div>
+      </Fragment>}
+    </Card>
+  </div>;
+}
+
+// ── CALENDAR ───────────────────────────────────────
+
+function CalendarScreen(props) {
+  var words = props.data.words.filter(function(w){return !w.learned;});
+  var t = today();
+  var learned = props.data.words.filter(function(w){return w.learned;});
+
+  return <div style={{maxWidth:600,margin:"0 auto",padding:"24px 20px"}}>
+    <h2 style={{fontSize:22,fontWeight:800,margin:"0 0 20px",textAlign:"center"}}>🗃️ Vue par boîtes</h2>
+
+    {[1,2,3,4,5].map(function(b) {
+      var boxWords = words.filter(function(w){return w.box===b;});
+      var dueNow = boxWords.filter(function(w){return w.nextReview<=t;});
+      return <Card key={b} style={{marginBottom:12,padding:"16px 20px",borderLeft:"4px solid "+BOX_COLORS[b]}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:boxWords.length>0?10:0}}>
+          <div>
+            <span style={{fontWeight:800,fontSize:15,color:BOX_COLORS[b]}}>Boîte {b}</span>
+            <span style={{fontSize:12,color:"#8a7e70",marginLeft:8}}>Intervalle : +{BOX_INTERVALS[b]} jour{BOX_INTERVALS[b]>1?"s":""}</span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:15,fontWeight:800,color:BOX_COLORS[b]}}>{boxWords.length}</span>
+            {dueNow.length > 0 && <span style={{fontSize:11,padding:"2px 8px",borderRadius:6,background:"#fef3eb",color:"#e07a3a",fontWeight:700}}>{dueNow.length} à réviser</span>}
+          </div>
+        </div>
+        {boxWords.length > 0 && <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+          {boxWords.map(function(w) {
+            var isDue = w.nextReview <= t;
+            return <span key={w.id} style={{fontSize:11,padding:"4px 10px",borderRadius:8,background:isDue?BOX_COLORS[b]+"20":"#f5f0ea",color:isDue?BOX_COLORS[b]:"#8a7e70",fontWeight:isDue?700:500,border:isDue?"1px solid "+BOX_COLORS[b]+"40":"1px solid #e8e0d4"}}>{w.french}</span>;
+          })}
+        </div>}
+      </Card>;
+    })}
+
+    {learned.length > 0 && <Card style={{padding:"16px 20px",borderLeft:"4px solid #3aae5c",marginBottom:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:learned.length>0?10:0}}>
+        <span style={{fontWeight:800,fontSize:15,color:"#3aae5c"}}>🎓 Appris</span>
+        <span style={{fontSize:15,fontWeight:800,color:"#3aae5c"}}>{learned.length}</span>
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {learned.map(function(w) {
+          return <span key={w.id} style={{fontSize:11,padding:"4px 10px",borderRadius:8,background:"#f0faf2",color:"#3aae5c",fontWeight:500}}>{w.french}</span>;
+        })}
+      </div>
+    </Card>}
+
+    <div style={{textAlign:"center",marginTop:16}}>
+      <Btn onClick={props.onBack} variant="ghost">← Retour</Btn>
+    </div>
+  </div>;
+}
+
+// ── WORD LIST ──────────────────────────────────────
+
+function WordListScreen(props) {
+  var _filter = useState("all"), filter = _filter[0], setFilter = _filter[1];
+  var words = props.data.words;
+  var filtered = filter === "all" ? words : filter === "learned" ? words.filter(function(w){return w.learned;}) : words.filter(function(w){return !w.learned && w.box===parseInt(filter);});
+
+  function deleteWord(id) {
+    if (confirm("Supprimer ce mot ?")) props.onDeleteWord(id);
+  }
+
+  return <div style={{maxWidth:600,margin:"0 auto",padding:"24px 20px"}}>
+    <h2 style={{fontSize:22,fontWeight:800,margin:"0 0 16px",textAlign:"center"}}>📖 Tous les mots ({words.length})</h2>
+
+    {/* Filters */}
+    <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap",justifyContent:"center"}}>
+      {[{k:"all",l:"Tous"},{k:"1",l:"B1"},{k:"2",l:"B2"},{k:"3",l:"B3"},{k:"4",l:"B4"},{k:"5",l:"B5"},{k:"learned",l:"🎓 Appris"}].map(function(f) {
+        return <button key={f.k} onClick={function(){setFilter(f.k);}} style={{padding:"6px 14px",borderRadius:8,border:filter===f.k?"2px solid #e07a3a":"1px solid #e8e0d4",background:filter===f.k?"#fef3eb":"#fff",fontWeight:600,fontSize:12,color:filter===f.k?"#e07a3a":"#8a7e70",fontFamily:"inherit",cursor:"pointer"}}>{f.l}</button>;
+      })}
+    </div>
+
+    <Card style={{padding:16}}>
+      {filtered.length === 0 && <p style={{textAlign:"center",color:"#8a7e70",fontSize:14,padding:20}}>Aucun mot</p>}
+      {filtered.map(function(w) {
+        return <div key={w.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 6px",borderBottom:"1px solid #f5f0ea"}}>
+          <div style={{flex:1}}>
+            <span style={{fontWeight:700}}>{w.french}</span>
+            <span style={{color:"#8a7e70",margin:"0 8px"}}>→</span>
+            <span style={{color:"#5a524a"}}>{w.target}</span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            {w.learned ? <span style={{fontSize:11,padding:"3px 8px",borderRadius:6,background:"#f0faf2",color:"#3aae5c",fontWeight:700}}>🎓</span> : <BoxBadge box={w.box}/>}
+            <button onClick={function(){deleteWord(w.id);}} style={{background:"none",border:"none",color:"#c4b8a8",fontSize:16,cursor:"pointer",padding:4}}>×</button>
+          </div>
+        </div>;
+      })}
+    </Card>
+
+    <div style={{textAlign:"center",marginTop:16}}>
+      <Btn onClick={props.onBack} variant="ghost">← Retour</Btn>
+    </div>
+  </div>;
+}
+
+// ── SETTINGS ───────────────────────────────────────
+
+function SettingsScreen(props) {
+  var fileRef = useRef(null);
+
+  function doExport() {
+    var backup = {};
+    var enData = loadData("english");
+    var deData = loadData("german");
+    if (enData) backup.english = enData;
+    if (deData) backup.german = deData;
+    if (props.data.language === "english") backup.english = props.data;
+    if (props.data.language === "german") backup.german = props.data;
+    downloadJSON(backup, "leitner_backup_"+today()+".json");
+  }
+
+  function doImport(e) {
+    var file = e.target.files[0];
+    if (!file) return;
+    var r = new FileReader();
+    r.onload = function(ev) {
+      try {
+        var d = JSON.parse(ev.target.result);
+        if (d.english || d.german) {
+          if (d.english && d.english.words) { d.english.language = "english"; saveData(d.english); }
+          if (d.german && d.german.words) { d.german.language = "german"; saveData(d.german); }
+          var current = d[props.data.language];
+          if (current && current.words) { props.onImport(current); }
+          alert("Sauvegarde restaurée !");
+        } else if (d && d.words) {
+          d.language = d.language || props.data.language;
+          saveData(d);
+          if (d.language === props.data.language) props.onImport(d);
+          alert("Données importées !");
+        } else { alert("Fichier invalide."); }
+      } catch(ex) { alert("Erreur JSON."); }
+    };
+    r.readAsText(file);
+    e.target.value = "";
+  }
+
+  function doReset() {
+    if (confirm("Tout effacer ? Cette action est irréversible.")) {
+      localStorage.removeItem(storageKey(props.data.language));
+      props.onReset();
+    }
+  }
+
+
+  return <div style={{maxWidth:500,margin:"0 auto",padding:"24px 20px"}}>
+    <h2 style={{fontSize:22,fontWeight:800,margin:"0 0 20px",textAlign:"center"}}>⚙️ Paramètres</h2>
+
+    <Card style={{marginBottom:16}}>
+      <h3 style={{margin:"0 0 12px",fontSize:15,fontWeight:800}}>💾 Sauvegarde</h3>
+      <p style={{fontSize:13,color:"#8a7e70",marginBottom:14}}>Les données sont sauvegardées automatiquement dans le navigateur. Exporte un fichier JSON pour une sauvegarde externe.</p>
+      <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+        <Btn onClick={doExport} style={{flex:1}}>📥 Exporter JSON</Btn>
+        <div style={{flex:1}}>
+          <input ref={fileRef} type="file" accept=".json" onChange={doImport} style={{display:"none"}}/>
+          <Btn onClick={function(){fileRef.current.click();}} variant="accent" style={{width:"100%"}}>📂 Importer JSON</Btn>
+        </div>
+      </div>
+    </Card>
+
+    
+
+
+    <Card style={{marginBottom:16,borderColor:"#f5d0b0"}}>
+      <h3 style={{margin:"0 0 12px",fontSize:15,fontWeight:800,color:"#dc3545"}}>🗑️ Réinitialiser</h3>
+      <p style={{fontSize:13,color:"#8a7e70",marginBottom:14}}>Supprimer les données de la langue actuelle ({LANG_LABELS[props.data.language]}) et recommencer à zéro.</p>
+      <Btn onClick={doReset} variant="danger" style={{fontSize:13,padding:"8px 20px"}}>Tout effacer</Btn>
+    </Card>
+
+    <div style={{textAlign:"center",marginTop:16}}>
+      <Btn onClick={props.onBack} variant="ghost">← Retour</Btn>
+    </div>
+  </div>;
+}
+
+// ── MAIN APP ───────────────────────────────────────
+
+function App() {
+  var _studentCode = useState(function() { return localStorage.getItem(STUDENT_CODE_KEY) || null; });
+  var studentCode = _studentCode[0], setStudentCode = _studentCode[1];
+  var _syncing = useState(false), syncing = _syncing[0], setSyncing = _syncing[1];
+
+  var _lang = useState(function() {
+    if (loadData("english")) return "english";
+    if (loadData("german")) return "german";
+    return "english";
+  }), currentLang = _lang[0], setCurrentLang = _lang[1];
+
+  var _data = useState(function() {
+    var d = loadData(currentLang);
+    if (!d) d = {language:currentLang, words:[], createdDate:today()};
+    return d;
+  }), data = _data[0], setData = _data[1];
+
+  var _page = useState("home"), page = _page[0], setPage = _page[1];
+  var saveTimerRef = useRef(null);
+
+  useEffect(function() {
+    if (!data) return;
+    saveData(data);
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    if (studentCode) {
+      saveTimerRef.current = setTimeout(function() {
+        setSyncing(true);
+        cloudSave(studentCode, data).then(function() { setSyncing(false); });
+      }, 2000);
+    }
+  }, [data]);
+
+  function handleLogin(code) {
+    setStudentCode(code);
+    var d = loadData(currentLang);
+    if (!d) d = {language:currentLang, words:[], createdDate:today()};
+    setData(d);
+  }
+
+  function handleLogout() {
+    if (data && studentCode) cloudSave(studentCode, data);
+    localStorage.removeItem(STUDENT_CODE_KEY);
+    setStudentCode(null);
+    setPage("home");
+  }
+
+  function switchLang(newLang) {
+    if (data) saveData(data);
+    var newData = loadData(newLang);
+    if (!newData) newData = {language:newLang, words:[], createdDate:today()};
+    newData.language = newLang;
+    setCurrentLang(newLang);
+    setData(newData);
+    setPage("home");
+  }
+
+  function addWord(w) {
+    setData(function(prev) {
+      return Object.assign({}, prev, {words: prev.words.concat([w])});
+    });
+  }
+
+  function deleteWord(id) {
+    setData(function(prev) {
+      return Object.assign({}, prev, {words: prev.words.filter(function(w){return w.id!==id;})});
+    });
+  }
+
+  function handleWordResult(id, isCorrect, markLearned) {
+    setData(function(prev) {
+      return Object.assign({}, prev, {words: prev.words.map(function(w) {
+        if (w.id !== id) return w;
+        var newBox = isCorrect ? Math.min(w.box + 1, 5) : 1;
+        var interval = BOX_INTERVALS[newBox];
+        var entry = {date:today(), result:isCorrect?"correct":"incorrect", fromBox:w.box, toBox:newBox};
+        return Object.assign({}, w, {
+          box: markLearned ? w.box : newBox,
+          nextReview: markLearned ? w.nextReview : addDays(today(), interval),
+          lastReviewed: today(),
+          history: w.history.concat([entry]),
+          learned: !!markLearned
+        });
+      })});
+    });
+  }
+
+  function handleReset() {
+    localStorage.removeItem(storageKey(currentLang));
+    var empty = {language:currentLang, words:[], createdDate:today()};
+    setData(empty);
+    if (studentCode) cloudSave(studentCode, empty);
+    setPage("home");
+  }
+
+  if (!studentCode) return <LoginScreen onLogin={handleLogin}/>;
+
+  return <div style={{minHeight:"100vh"}}>
+    <NavBar language={data.language} studentCode={studentCode} syncing={syncing} onHome={function(){setPage("home");}} onLogout={handleLogout}/>
+    {page === "home" && <HomeScreen data={data} onReview={function(){setPage("review");}} onAdd={function(){setPage("add");}} onCalendar={function(){setPage("calendar");}} onWordList={function(){setPage("wordlist");}} onSettings={function(){setPage("settings");}} onChangeLang={switchLang} onImportData={function(d){d.language=currentLang;setData(d);}} onImportWords={function(newWords){setData(function(prev){return Object.assign({},prev,{words:prev.words.concat(newWords)});});}}/>}
+    {page === "add" && <AddWordsScreen data={data} language={data.language} onAddWord={addWord} onBack={function(){setPage("home");}}/>}
+    {page === "review" && <ReviewScreen data={data} onWordResult={handleWordResult} onBack={function(){setPage("home");}}/>}
+    {page === "calendar" && <CalendarScreen data={data} onBack={function(){setPage("home");}}/>}
+    {page === "wordlist" && <WordListScreen data={data} onDeleteWord={deleteWord} onBack={function(){setPage("home");}}/>}
+    {page === "settings" && <SettingsScreen data={data} onImport={function(d){d.language=currentLang;setData(d);setPage("home");}} onReset={handleReset} onBack={function(){setPage("home");}}/>}
+  </div>;
+}
+
+ReactDOM.render(React.createElement(App), document.getElementById("root"));
+</script>
+</body>
+</html>
