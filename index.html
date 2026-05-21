@@ -609,10 +609,10 @@ function ReviewScreen(props) {
 
   // ── RETEST PHASE ──
   if (phase === "retest") {
-    if (retestIds.length === 0) { if(!done) setDone(true); return null; }
+    if (retestIds.length === 0) { setDone(true); return <div style={{maxWidth:500,margin:"60px auto",padding:"0 20px",textAlign:"center"}}><Card style={{padding:48}}><div style={{fontSize:48,marginBottom:12}}>⏳</div><p>Chargement...</p></Card></div>; }
     var rtId = retestIds[retestQi];
     var rtw = props.data.words.find(function(w){return w.id===rtId;});
-    if (!rtw) { setDone(true); return null; }
+    if (!rtw) { setDone(true); return <div style={{maxWidth:500,margin:"60px auto",padding:"0 20px",textAlign:"center"}}><Card style={{padding:48}}><div style={{fontSize:48,marginBottom:12}}>⏳</div><p>Chargement...</p></Card></div>; }
 
     function checkRetest() {
       var ok = normalize(answer) === normalize(rtw.target);
@@ -665,7 +665,7 @@ function ReviewScreen(props) {
   // ── MAIN TEST ──
   var cwId = dueIds[qi];
   var cw = props.data.words.find(function(w){return w.id===cwId;});
-  if (!cw) { if(!done) setDone(true); return null; }
+  if (!cw) { setDone(true); return <div style={{maxWidth:500,margin:"60px auto",padding:"0 20px",textAlign:"center"}}><Card style={{padding:48}}><div style={{fontSize:48,marginBottom:12}}>⏳</div><p>Chargement...</p></Card></div>; }
 
   function checkAnswer() {
     var isCorrect = normalize(answer) === normalize(cw.target);
