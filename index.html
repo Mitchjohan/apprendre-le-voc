@@ -230,53 +230,95 @@ function NavBar(props) {
 // ── LOGIN ──────────────────────────────────────────
 
 function LoginScreen(props) {
+  var _mode = useState("choose"), mode = _mode[0], setMode = _mode[1];
   var _code = useState(""), code = _code[0], setCode = _code[1];
   var _loading = useState(false), loading = _loading[0], setLoading = _loading[1];
   var _error = useState(null), error = _error[0], setError = _error[1];
 
-  function handleLogin() {
+  function doLogin() {
+    if (!code.trim()) return;
+    var cleanCode = code.trim().toLowerCase();
+    setLoading(true);
+    setError(null);
+    cloudLoad(cleanCode).then(function(cloudData) {
+      if (!cloudData) {
+        setLoading(false);
+        setError("Code inconnu. Vérifie ton code ou crée un nouveau compte.");
+        return;
+      }
+      if (cloudData.english && cloudData.english.words) {
+        cloudData.english.language = "english";
+        localStorage.setItem(storageKey("english"), JSON.stringify(cloudData.english));
+      }
+      if (cloudData.german && cloudData.german.words) {
+        cloudData.german.language = "german";
+        localStorage.setItem(storageKey("german"), JSON.stringify(cloudData.german));
+      }
+      localStorage.setItem(STUDENT_CODE_KEY, cleanCode);
+      setLoading(false);
+      props.onLogin(cleanCode);
+    }).catch(function() {
+      setLoading(false);
+      setError("Erreur de connexion. Vérifie ta connexion internet.");
+    });
+  }
+
+  function doCreate() {
     if (!code.trim()) return;
     var cleanCode = code.trim().toLowerCase();
     setLoading(true);
     setError(null);
     cloudLoad(cleanCode).then(function(cloudData) {
       if (cloudData) {
-        // Restore both languages from cloud
-        if (cloudData.english && cloudData.english.words) {
-          cloudData.english.language = "english";
-          localStorage.setItem(storageKey("english"), JSON.stringify(cloudData.english));
-        }
-        if (cloudData.german && cloudData.german.words) {
-          cloudData.german.language = "german";
-          localStorage.setItem(storageKey("german"), JSON.stringify(cloudData.german));
-        }
+        setLoading(false);
+        setError("Ce code existe déjà. Choisis un autre code ou connecte-toi.");
+        return;
       }
-      localStorage.setItem(STUDENT_CODE_KEY, cleanCode);
-      setLoading(false);
-      props.onLogin(cleanCode);
+      var emptyData = {english:{language:"english",words:[],createdDate:today()},german:{language:"german",words:[],createdDate:today()}};
+      return cloudSave(cleanCode, emptyData.english).then(function() {
+        localStorage.setItem(STUDENT_CODE_KEY, cleanCode);
+        setLoading(false);
+        props.onLogin(cleanCode);
+      });
     }).catch(function() {
-      // Offline - continue with local data
-      localStorage.setItem(STUDENT_CODE_KEY, cleanCode);
       setLoading(false);
-      props.onLogin(cleanCode);
+      setError("Erreur de connexion. Vérifie ta connexion internet.");
     });
   }
 
-  function handleKey(e) { if (e.key === "Enter") handleLogin(); }
+  function handleKey(e) { if (e.key === "Enter") { if (mode === "login") doLogin(); else if (mode === "create") doCreate(); } }
 
-  return <div style={{maxWidth:420,margin:"80px auto",padding:"0 20px",textAlign:"center"}}>
+  return <div style={{maxWidth:420,margin:"60px auto",padding:"0 20px",textAlign:"center"}}>
     <div className="pop" style={{fontSize:64,marginBottom:16}}>🗃️</div>
     <h1 style={{fontSize:28,fontWeight:900,margin:"0 0 8px",color:"#e07a3a"}}>Leitner Vocab</h1>
-    <p style={{color:"#8a7e70",fontSize:15,marginBottom:36}}>Apprends ton vocabulaire avec la méthode des boîtes</p>
-    <Card>
-      <h2 style={{fontSize:18,fontWeight:800,margin:"0 0 8px"}}>Ton code personnel</h2>
-      <p style={{fontSize:13,color:"#8a7e70",marginBottom:20}}>Entre ton code pour retrouver tes mots (ex: ton prénom + un chiffre)</p>
-      <input value={code} onChange={function(e){setCode(e.target.value);}} onKeyDown={handleKey} placeholder="ex: emma3" style={{width:"100%",padding:"14px 18px",borderRadius:12,border:"2px solid #e8e0d4",fontSize:20,textAlign:"center",fontWeight:700,boxSizing:"border-box",marginBottom:16}}/>
-      {error && <div style={{fontSize:13,color:"#dc3545",marginBottom:12}}>{error}</div>}
-      <Btn onClick={handleLogin} disabled={!code.trim() || loading} style={{width:"100%"}}>
-        {loading ? "Chargement..." : "C'est parti ! →"}
+    <p style={{color:"#8a7e70",fontSize:15,marginBottom:32}}>Apprends ton vocabulaire avec la méthode des boîtes</p>
+
+    {mode === "choose" && <div style={{display:"flex",flexDirection:"column",gap:12,maxWidth:300,margin:"0 auto"}}>
+      <Btn onClick={function(){setMode("login");setCode("");setError(null);}} style={{width:"100%",padding:"16px 24px",fontSize:16}}>🔑 Se connecter</Btn>
+      <Btn onClick={function(){setMode("create");setCode("");setError(null);}} variant="accent" style={{width:"100%",padding:"16px 24px",fontSize:16}}>➕ Créer un compte</Btn>
+    </div>}
+
+    {mode === "login" && <Card>
+      <h2 style={{fontSize:18,fontWeight:800,margin:"0 0 8px"}}>🔑 Se connecter</h2>
+      <p style={{fontSize:13,color:"#8a7e70",marginBottom:20}}>Entre ton code personnel</p>
+      <input value={code} onChange={function(e){setCode(e.target.value);}} onKeyDown={handleKey} autoFocus placeholder="ex: emma3" style={{width:"100%",padding:"14px 18px",borderRadius:12,border:"2px solid #e8e0d4",fontSize:20,textAlign:"center",fontWeight:700,boxSizing:"border-box",marginBottom:16}}/>
+      {error && <div style={{fontSize:13,color:"#dc3545",marginBottom:12,fontWeight:600}}>{error}</div>}
+      <Btn onClick={doLogin} disabled={!code.trim() || loading} style={{width:"100%"}}>
+        {loading ? "Connexion..." : "Se connecter →"}
       </Btn>
-    </Card>
+      <div style={{marginTop:16}}><Btn onClick={function(){setMode("choose");setError(null);}} variant="ghost">← Retour</Btn></div>
+    </Card>}
+
+    {mode === "create" && <Card>
+      <h2 style={{fontSize:18,fontWeight:800,margin:"0 0 8px"}}>➕ Nouveau compte</h2>
+      <p style={{fontSize:13,color:"#8a7e70",marginBottom:20}}>Choisis un code que tu retiendras facilement (ex: ton prénom + un chiffre)</p>
+      <input value={code} onChange={function(e){setCode(e.target.value);}} onKeyDown={handleKey} autoFocus placeholder="ex: emma3" style={{width:"100%",padding:"14px 18px",borderRadius:12,border:"2px solid #e8e0d4",fontSize:20,textAlign:"center",fontWeight:700,boxSizing:"border-box",marginBottom:16}}/>
+      {error && <div style={{fontSize:13,color:"#dc3545",marginBottom:12,fontWeight:600}}>{error}</div>}
+      <Btn onClick={doCreate} disabled={!code.trim() || loading} variant="accent" style={{width:"100%"}}>
+        {loading ? "Création..." : "Créer mon compte →"}
+      </Btn>
+      <div style={{marginTop:16}}><Btn onClick={function(){setMode("choose");setError(null);}} variant="ghost">← Retour</Btn></div>
+    </Card>}
   </div>;
 }
 
@@ -515,32 +557,36 @@ function SpeakButton(props) {
 // ── REVIEW SESSION ─────────────────────────────────
 
 function ReviewScreen(props) {
-  var _ids = useState(function() { return getDueWords(props.data.words).map(function(w){return w.id;}); });
-  var dueIds = _ids[0];
+  // Capture words at mount time to avoid parent re-render issues
+  var wordsRef = useRef(getDueWords(props.data.words).slice());
+  var allWords = wordsRef.current;
+  var totalWords = allWords.length;
+  var resultsRef = useRef({});
+  var failedRef = useRef([]);
+
   var _qi = useState(0), qi = _qi[0], setQi = _qi[1];
   var _answer = useState(""), answer = _answer[0], setAnswer = _answer[1];
   var _result = useState(null), result = _result[0], setResult = _result[1];
   var _stats = useState({correct:0,incorrect:0}), stats = _stats[0], setStats = _stats[1];
-  var _done = useState(false), done = _done[0], setDone = _done[1];
-  var _keepChoice = useState(null), keepChoice = _keepChoice[0], setKeepChoice = _keepChoice[1];
   var _phase = useState("test"), phase = _phase[0], setPhase = _phase[1];
-  var _failedIds = useState([]), failedIds = _failedIds[0], setFailedIds = _failedIds[1];
-  var failedIdsRef = useRef([]);
   var _retypeAnswer = useState(""), retypeAnswer = _retypeAnswer[0], setRetypeAnswer = _retypeAnswer[1];
   var _retypeOk = useState(false), retypeOk = _retypeOk[0], setRetypeOk = _retypeOk[1];
-  var _retestIds = useState([]), retestIds = _retestIds[0], setRetestIds = _retestIds[1];
   var _retestQi = useState(0), retestQi = _retestQi[0], setRetestQi = _retestQi[1];
   var _retestResult = useState(null), retestResult = _retestResult[0], setRetestResult = _retestResult[1];
   var _retestStats = useState({correct:0,incorrect:0}), retestStats = _retestStats[0], setRetestStats = _retestStats[1];
+  var _keepAsking = useState(false), keepAsking = _keepAsking[0], setKeepAsking = _keepAsking[1];
   var inputRef = useRef(null);
   var retypeRef = useRef(null);
   var retestRef = useRef(null);
-  var totalWords = dueIds.length;
   var lang = props.data.language;
   var langLabel = lang === "english" ? "anglais" : "allemand";
 
-  // ── NOTHING TO REVIEW ──
-  if (totalWords === 0 && !done) {
+  // Results are saved after each word, just go back
+  function finishSession() {
+    props.onBack();
+  }
+
+  if (totalWords === 0) {
     return <div style={{maxWidth:500,margin:"60px auto",padding:"0 20px",textAlign:"center"}}>
       <Card style={{padding:48}}>
         <div style={{fontSize:48,marginBottom:12}}>✅</div>
@@ -551,8 +597,8 @@ function ReviewScreen(props) {
     </div>;
   }
 
-  // ── DONE SCREEN ──
-  if (done) {
+  // ── DONE ──
+  if (phase === "done") {
     return <div style={{maxWidth:500,margin:"60px auto",padding:"0 20px",textAlign:"center"}}>
       <Card style={{padding:48}}>
         <div className="pop" style={{fontSize:48,marginBottom:12}}>🎉</div>
@@ -573,89 +619,50 @@ function ReviewScreen(props) {
           <span style={{margin:"0 8px",color:"#c4b8a8"}}>·</span>
           <span style={{color:"#dc3545",fontWeight:700}}>{retestStats.incorrect} ✗</span>
         </div>}
-        <Btn onClick={props.onBack} variant="ghost">← Retour</Btn>
+        <Btn onClick={finishSession} variant="ghost">← Retour</Btn>
       </Card>
     </div>;
   }
 
-  // ── HELPERS ──
-  function goToRetestOrDone() {
-    if (failedIdsRef.current.length > 0) {
-      setRetestIds(failedIdsRef.current.slice());
-      setRetestQi(0);
-      setRetestResult(null);
-      setAnswer("");
-      setPhase("retest");
-      setTimeout(function(){ if(retestRef.current) retestRef.current.focus(); }, 100);
-    } else {
-      setDone(true);
-    }
-  }
-
-  function advanceMain() {
-    setResult(null);
-    setAnswer("");
-    setRetypeAnswer("");
-    setRetypeOk(false);
-    setKeepChoice(null);
-    setPhase("test");
-    if (qi + 1 >= totalWords) {
-      goToRetestOrDone();
-    } else {
-      setQi(qi + 1);
-      setTimeout(function(){ if(inputRef.current) inputRef.current.focus(); }, 100);
-    }
-  }
-
-  // ── RETEST PHASE ──
+  // ── RETEST ──
   if (phase === "retest") {
-    if (retestIds.length === 0) { setDone(true); return <div style={{maxWidth:500,margin:"60px auto",padding:"0 20px",textAlign:"center"}}><Card style={{padding:48}}><div style={{fontSize:48,marginBottom:12}}>⏳</div><p>Chargement...</p></Card></div>; }
-    var rtId = retestIds[retestQi];
-    var rtw = props.data.words.find(function(w){return w.id===rtId;});
-    if (!rtw) { setDone(true); return <div style={{maxWidth:500,margin:"60px auto",padding:"0 20px",textAlign:"center"}}><Card style={{padding:48}}><div style={{fontSize:48,marginBottom:12}}>⏳</div><p>Chargement...</p></Card></div>; }
+    var failed = failedRef.current;
+    if (retestQi >= failed.length) { setPhase("done"); return <div style={{textAlign:"center",padding:40}}>⏳</div>; }
+    var rtw = failed[retestQi];
 
     function checkRetest() {
       var ok = normalize(answer) === normalize(rtw.target);
       setRetestResult(ok ? "correct" : "incorrect");
-      setRetestStats(function(prev) {
-        return ok ? {correct:prev.correct+1,incorrect:prev.incorrect} : {correct:prev.correct,incorrect:prev.incorrect+1};
-      });
+      setRetestStats(function(p) { return ok ? {correct:p.correct+1,incorrect:p.incorrect} : {correct:p.correct,incorrect:p.incorrect+1}; });
       if (!ok) speak(rtw.target, lang);
     }
-
     function nextRetest() {
-      setRetestResult(null);
-      setAnswer("");
-      if (retestQi + 1 >= retestIds.length) { setDone(true); }
+      setRetestResult(null); setAnswer("");
+      if (retestQi + 1 >= failed.length) { setPhase("done"); }
       else { setRetestQi(retestQi + 1); setTimeout(function(){ if(retestRef.current) retestRef.current.focus(); }, 100); }
     }
-
-    function retestKey(e) { if (e.key === "Enter" && answer.trim()) { if (retestResult === null) checkRetest(); else nextRetest(); } }
-
-    useEffect(function() { if(retestRef.current) retestRef.current.focus(); }, [retestQi]);
+    function retestKey(e) { if (e.key === "Enter" && answer.trim()) { if (!retestResult) checkRetest(); else nextRetest(); } }
 
     return <div style={{maxWidth:500,margin:"0 auto",padding:"24px 20px"}}>
       <div style={{textAlign:"center",marginBottom:16}}>
-        <span style={{fontSize:12,fontWeight:700,padding:"4px 14px",borderRadius:20,background:"#fef3eb",color:"#e07a3a"}}>🔄 Retest — {retestQi+1}/{retestIds.length}</span>
+        <span style={{fontSize:12,fontWeight:700,padding:"4px 14px",borderRadius:20,background:"#fef3eb",color:"#e07a3a"}}>🔄 Retest — {retestQi+1}/{failed.length}</span>
       </div>
       <div style={{height:4,background:"#f5f0ea",borderRadius:2,marginBottom:24,overflow:"hidden"}}>
-        <div style={{height:"100%",width:(retestQi/retestIds.length*100)+"%",background:"#e07a3a",borderRadius:2,transition:"width .4s ease"}}></div>
+        <div style={{height:"100%",width:((retestQi)/failed.length*100)+"%",background:"#e07a3a",borderRadius:2,transition:"width .4s ease"}}></div>
       </div>
       <Card style={{padding:40,textAlign:"center"}}>
         <div style={{fontSize:13,color:"#e07a3a",fontWeight:700,textTransform:"uppercase",letterSpacing:1.5,marginBottom:6}}>2ème chance</div>
         <div style={{fontSize:13,color:"#8a7e70",fontWeight:700,textTransform:"uppercase",letterSpacing:1.5,marginBottom:12}}>Écris en {langLabel}</div>
         <div style={{fontSize:32,fontWeight:800,color:"#2d2a26",marginBottom:28}}>{rtw.french}</div>
-        <input ref={retestRef} value={answer} onChange={function(e){setAnswer(e.target.value);}} onKeyDown={retestKey} disabled={retestResult!==null} placeholder="Ta réponse..." style={{width:"100%",padding:"14px 18px",borderRadius:12,border:"2px solid "+(retestResult==="correct"?"#3aae5c":retestResult==="incorrect"?"#dc3545":"#e8e0d4"),fontSize:18,textAlign:"center",fontWeight:600,boxSizing:"border-box",background:retestResult==="correct"?"#f0faf2":retestResult==="incorrect"?"#fef2f2":"#fff"}}/>
-        {retestResult !== null && <div style={{marginTop:16}}>
-          {retestResult === "correct" ? <div style={{color:"#3aae5c",fontWeight:800,fontSize:16}}>✓ Correct !</div>
-          : <div>
-            <div style={{color:"#dc3545",fontWeight:800,fontSize:16,marginBottom:4}}>✗ Incorrect</div>
+        <input ref={retestRef} value={answer} onChange={function(e){setAnswer(e.target.value);}} onKeyDown={retestKey} disabled={retestResult!==null} autoFocus placeholder="Ta réponse..." style={{width:"100%",padding:"14px 18px",borderRadius:12,border:"2px solid "+(retestResult==="correct"?"#3aae5c":retestResult==="incorrect"?"#dc3545":"#e8e0d4"),fontSize:18,textAlign:"center",fontWeight:600,boxSizing:"border-box",background:retestResult==="correct"?"#f0faf2":retestResult==="incorrect"?"#fef2f2":"#fff"}}/>
+        {retestResult && <div style={{marginTop:16}}>
+          {retestResult==="correct" ? <div style={{color:"#3aae5c",fontWeight:800,fontSize:16}}>✓ Correct !</div>
+          : <div><div style={{color:"#dc3545",fontWeight:800,fontSize:16,marginBottom:4}}>✗ Incorrect</div>
             <div style={{fontSize:14,color:"#8a7e70",marginBottom:8}}>Réponse : <strong style={{color:"#2d2a26"}}>{rtw.target}</strong></div>
-            <SpeakButton text={rtw.target} language={lang}/>
-          </div>}
+            <SpeakButton text={rtw.target} language={lang}/></div>}
         </div>}
         <div style={{marginTop:24}}>
-          {retestResult === null ? <Btn onClick={checkRetest} disabled={!answer.trim()}>Vérifier</Btn>
+          {!retestResult ? <Btn onClick={checkRetest} disabled={!answer.trim()}>Vérifier</Btn>
           : <Btn onClick={nextRetest} variant={retestResult==="correct"?"success":"primary"}>Suivant →</Btn>}
         </div>
       </Card>
@@ -663,71 +670,51 @@ function ReviewScreen(props) {
   }
 
   // ── MAIN TEST ──
-  var cwId = dueIds[qi];
-  var cw = props.data.words.find(function(w){return w.id===cwId;});
-  if (!cw) { setDone(true); return <div style={{maxWidth:500,margin:"60px auto",padding:"0 20px",textAlign:"center"}}><Card style={{padding:48}}><div style={{fontSize:48,marginBottom:12}}>⏳</div><p>Chargement...</p></Card></div>; }
+  var cw = allWords[qi];
+  if (!cw) { setPhase("done"); return <div style={{textAlign:"center",padding:40}}>⏳</div>; }
 
   function checkAnswer() {
-    var isCorrect = normalize(answer) === normalize(cw.target);
-    setResult(isCorrect ? "correct" : "incorrect");
-    setStats(function(prev) {
-      return isCorrect ? {correct:prev.correct+1,incorrect:prev.incorrect} : {correct:prev.correct,incorrect:prev.incorrect+1};
-    });
-    if (!isCorrect) {
-      failedIdsRef.current = failedIdsRef.current.concat([cw.id]);
-      setFailedIds(failedIdsRef.current);
+    var ok = normalize(answer) === normalize(cw.target);
+    setResult(ok ? "correct" : "incorrect");
+    setStats(function(p) { return ok ? {correct:p.correct+1,incorrect:p.incorrect} : {correct:p.correct,incorrect:p.incorrect+1}; });
+    if (!ok) {
+      failedRef.current.push(cw);
+      resultsRef.current[cw.id] = {correct:false, learned:false};
       speak(cw.target, lang);
     }
   }
 
-  function goToRetype() {
-    setPhase("retype");
-    setRetypeAnswer("");
-    setRetypeOk(false);
-    setTimeout(function(){ if(retypeRef.current) retypeRef.current.focus(); }, 100);
-  }
-
-  function checkRetype() {
-    if (normalize(retypeAnswer) === normalize(cw.target)) {
-      setRetypeOk(true);
+  function goNext() {
+    var r = resultsRef.current[cw.id];
+    if (r) { props.onWordResult(cw.id, r.correct, r.learned); }
+    setResult(null); setAnswer(""); setRetypeAnswer(""); setRetypeOk(false); setKeepAsking(false); setPhase("test");
+    if (qi + 1 >= totalWords) {
+      if (failedRef.current.length > 0) { setAnswer(""); setPhase("retest"); setRetestQi(0); setRetestResult(null); }
+      else { setPhase("done"); }
     } else {
-      setRetypeAnswer("");
+      setQi(qi + 1);
+      setTimeout(function(){ if(inputRef.current) inputRef.current.focus(); }, 100);
     }
   }
 
   function handleCorrectNext() {
-    var wasBox5 = cw.box === 5;
-    if (wasBox5 && keepChoice === null) { setKeepChoice("asking"); return; }
-    props.onWordResult(cw.id, true, wasBox5 && keepChoice === "remove");
-    advanceMain();
-  }
-
-  function handleRetypeNext() {
-    props.onWordResult(cw.id, false, false);
-    advanceMain();
+    if (cw.box === 5 && !keepAsking) { setKeepAsking(true); return; }
+    resultsRef.current[cw.id] = {correct:true, learned:false};
+    goNext();
   }
 
   function handleKeep(choice) {
-    props.onWordResult(cw.id, true, choice === "remove");
-    advanceMain();
+    resultsRef.current[cw.id] = {correct:true, learned: choice === "remove"};
+    setKeepAsking(false);
+    goNext();
   }
 
-  function handleKey(e) {
-    if (e.key === "Enter" && answer.trim()) {
-      if (result === null) checkAnswer();
-      else if (result === "correct") handleCorrectNext();
-      else goToRetype();
-    }
-  }
+  function goToRetype() { setPhase("retype"); setRetypeAnswer(""); setRetypeOk(false); setTimeout(function(){ if(retypeRef.current) retypeRef.current.focus(); }, 100); }
+  function checkRetype() { if (normalize(retypeAnswer) === normalize(cw.target)) setRetypeOk(true); else setRetypeAnswer(""); }
+  function handleRetypeNext() { goNext(); }
 
-  function handleRetypeKey(e) {
-    if (e.key === "Enter" && retypeAnswer.trim()) {
-      if (!retypeOk) checkRetype();
-      else handleRetypeNext();
-    }
-  }
-
-  useEffect(function() { if(inputRef.current && phase==="test") inputRef.current.focus(); }, [qi]);
+  function handleKey(e) { if (e.key==="Enter"&&answer.trim()) { if (!result) checkAnswer(); else if (result==="correct") handleCorrectNext(); else goToRetype(); } }
+  function handleRetypeKey(e) { if (e.key==="Enter"&&retypeAnswer.trim()) { if (!retypeOk) checkRetype(); else handleRetypeNext(); } }
 
   return <div style={{maxWidth:500,margin:"0 auto",padding:"24px 20px"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
@@ -737,12 +724,11 @@ function ReviewScreen(props) {
     <div style={{height:4,background:"#f5f0ea",borderRadius:2,marginBottom:24,overflow:"hidden"}}>
       <div style={{height:"100%",width:(qi/totalWords*100)+"%",background:"#e07a3a",borderRadius:2,transition:"width .4s ease"}}></div>
     </div>
-
     <Card style={{padding:40,textAlign:"center",marginBottom:20}}>
       <div style={{fontSize:13,color:"#8a7e70",fontWeight:700,textTransform:"uppercase",letterSpacing:1.5,marginBottom:12}}>Écris en {langLabel}</div>
       <div style={{fontSize:32,fontWeight:800,color:"#2d2a26",marginBottom:28}}>{cw.french}</div>
 
-      {keepChoice === "asking" ? <div>
+      {keepAsking ? <div>
         <p style={{fontSize:14,color:"#8a7e70",marginBottom:16}}>Ce mot a atteint la boîte 5 ! 🎓</p>
         <p style={{fontSize:15,fontWeight:700,marginBottom:20}}>Le considérer comme appris ?</p>
         <div style={{display:"flex",gap:12,justifyContent:"center"}}>
@@ -760,18 +746,16 @@ function ReviewScreen(props) {
         </div>
         {!retypeOk ? <Fragment>
           <p style={{fontSize:13,color:"#8a7e70",marginBottom:10,fontWeight:600}}>Retape la bonne réponse :</p>
-          <input ref={retypeRef} value={retypeAnswer} onChange={function(e){setRetypeAnswer(e.target.value);}} onKeyDown={handleRetypeKey} placeholder="Retape ici..." style={{width:"100%",padding:"14px 18px",borderRadius:12,border:"2px solid #e8e0d4",fontSize:18,textAlign:"center",fontWeight:600,boxSizing:"border-box"}}/>
-          <div style={{marginTop:16}}>
-            <Btn onClick={checkRetype} disabled={!retypeAnswer.trim()}>Valider</Btn>
-          </div>
+          <input ref={retypeRef} value={retypeAnswer} onChange={function(e){setRetypeAnswer(e.target.value);}} onKeyDown={handleRetypeKey} placeholder="Retape ici..." autoFocus style={{width:"100%",padding:"14px 18px",borderRadius:12,border:"2px solid #e8e0d4",fontSize:18,textAlign:"center",fontWeight:600,boxSizing:"border-box"}}/>
+          <div style={{marginTop:16}}><Btn onClick={checkRetype} disabled={!retypeAnswer.trim()}>Valider</Btn></div>
         </Fragment> : <Fragment>
           <div style={{color:"#3aae5c",fontWeight:800,fontSize:16,marginBottom:16}}>✓ Bien retapé !</div>
           <Btn onClick={handleRetypeNext} variant="primary">Suivant →</Btn>
         </Fragment>}
       </div> : <Fragment>
-        <input ref={inputRef} value={answer} onChange={function(e){setAnswer(e.target.value);}} onKeyDown={handleKey} disabled={result!==null} placeholder="Ta réponse..." style={{width:"100%",padding:"14px 18px",borderRadius:12,border:"2px solid "+(result==="correct"?"#3aae5c":result==="incorrect"?"#dc3545":"#e8e0d4"),fontSize:18,textAlign:"center",fontWeight:600,boxSizing:"border-box",background:result==="correct"?"#f0faf2":result==="incorrect"?"#fef2f2":"#fff"}}/>
-        {result !== null && <div style={{marginTop:16}}>
-          {result === "correct" ? <Fragment>
+        <input ref={inputRef} value={answer} onChange={function(e){setAnswer(e.target.value);}} onKeyDown={handleKey} disabled={result!==null} autoFocus placeholder="Ta réponse..." style={{width:"100%",padding:"14px 18px",borderRadius:12,border:"2px solid "+(result==="correct"?"#3aae5c":result==="incorrect"?"#dc3545":"#e8e0d4"),fontSize:18,textAlign:"center",fontWeight:600,boxSizing:"border-box",background:result==="correct"?"#f0faf2":result==="incorrect"?"#fef2f2":"#fff"}}/>
+        {result && <div style={{marginTop:16}}>
+          {result==="correct" ? <Fragment>
             <div style={{color:"#3aae5c",fontWeight:800,fontSize:16}}>✓ Correct !</div>
             <div style={{marginTop:8}}><SpeakButton text={cw.target} language={lang}/></div>
           </Fragment> : <Fragment>
@@ -781,8 +765,8 @@ function ReviewScreen(props) {
           </Fragment>}
         </div>}
         <div style={{marginTop:24}}>
-          {result === null ? <Btn onClick={checkAnswer} disabled={!answer.trim()}>Vérifier</Btn>
-          : result === "correct" ? <Btn onClick={handleCorrectNext} variant="success">Suivant →</Btn>
+          {!result ? <Btn onClick={checkAnswer} disabled={!answer.trim()}>Vérifier</Btn>
+          : result==="correct" ? <Btn onClick={handleCorrectNext} variant="success">Suivant →</Btn>
           : <Btn onClick={goToRetype} variant="primary">Corriger →</Btn>}
         </div>
       </Fragment>}
