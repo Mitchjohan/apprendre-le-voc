@@ -275,6 +275,8 @@ function LoginScreen(props) {
         return;
       }
       var emptyData = {english:{language:"english",words:[],createdDate:today()},german:{language:"german",words:[],createdDate:today()}};
+      localStorage.removeItem(storageKey("english"));
+      localStorage.removeItem(storageKey("german"));
       return cloudSave(cleanCode, emptyData.english).then(function() {
         localStorage.setItem(STUDENT_CODE_KEY, cleanCode);
         setLoading(false);
@@ -992,6 +994,8 @@ function App() {
   function handleLogout() {
     if (data && studentCode) cloudSave(studentCode, data);
     localStorage.removeItem(STUDENT_CODE_KEY);
+    localStorage.removeItem(storageKey("english"));
+    localStorage.removeItem(storageKey("german"));
     setStudentCode(null);
     setPage("home");
   }
